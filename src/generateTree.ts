@@ -1,11 +1,6 @@
 import formatValue from "formatValue";
 import getAPIDump from "./apiDump";
-import { IO_SERVE_URL, OPTIONS } from "config";
-import Feedback from "feedback";
 import { SecurityType, ApiClass } from "api";
-
-const Lighting = game.GetService("Lighting");
-const HttpService = game.GetService("HttpService");
 
 const propNames = new Map<string, ReadonlyArray<string>>();
 
@@ -50,6 +45,8 @@ function getTSVariableName(name: string) {
 
 /** Handwritten replacement function for properly extending roblox services */
 function createTopLevelInterface({ ClassName: className, Name: name }: Instance) {
+	const varName = getTSVariableName(name);
+
 	switch (className) {
 		case "Workspace":
 			return "interface Workspace extends Model";
@@ -73,7 +70,7 @@ function createTopLevelInterface({ ClassName: className, Name: name }: Instance)
 		case "TestService":
 			return `interface ${className} extends Instance`;
 		default:
-			return `type ${getTSVariableName(name)} = ${className} &`;
+			return `type ${varName.sub(1, 1).upper() + varName.sub(2)} = ${className} &`;
 	}
 }
 
@@ -131,83 +128,6 @@ function validTSIdentifier(str: string) {
 	return !invalidTSBlacklist.has(str) && str.find("^[%a_$][%w_$]*$")[0] !== undefined ? str : `["${str}"]`;
 }
 
-/** Finds a valid name, given a desiredName. Continually checks desiredName${++num} until one does not exist in Lighting*/
-function getValidName(desiredName: string, parent: Instance) {
-	if (parent === Lighting) {
-		let i = 1;
-		while (parent.FindFirstChild(i === 1 ? desiredName : desiredName + i)) ++i;
-		return i === 1 ? desiredName : desiredName + i;
-	} else {
-		let i = 2;
-		while (parent.FindFirstChild(desiredName + i)) ++i;
-		return desiredName + i;
-	}
-}
-
-/** Publishes a slice of a string, which should be maximum 19_999 characters */
-function publishSlice(name: string, slice: string, parent: Instance) {
-	const _script = new Instance("Script");
-	_script.Source = slice;
-	_script.Name = getValidName(name, parent);
-	_script.Parent = parent;
-	return _script;
-}
-
-/** Writes output to Script objects inside of Lighting */
-function writeToLighting(name: string, source: string) {
-	name = name.split("/").pop()!;
-	const sourceSize = source.size();
-	const topSlice = publishSlice(name, source.sub(1, 20_000 - 1), Lighting);
-
-	if (sourceSize >= 20_000) {
-		for (let i = 20_000; i < source.size(); i += 20_000) {
-			publishSlice(name, source.sub(i, i + 19_999), topSlice);
-		}
-
-		new Feedback(
-			`Generated files in Lighting! Your file was too long to put in a single script, so check ${topSlice.Name}'s children.`,
-		);
-	} else {
-		new Feedback(`Generated file \`${topSlice.Name}\` in Lighting!`);
-	}
-}
-
-/** Writes output to io-serve */
-function writeToIoServe(name: string, source: string) {
-	HttpService.RequestAsync({
-		Url: `${IO_SERVE_URL}/${name}`,
-		Method: "PUT",
-		Body: source,
-	});
-	new Feedback(`Wrote to file \`${name}\` in io-serve!`);
-}
-
-/** Writes output to io-serve */
-function patchToIoServe(
-	name: string,
-	source: string,
-	start = `import { EvaluateInstanceTree } from "@rbxts/validate-tree";\n\n`,
-) {
-	const previousFile = HttpService.RequestAsync({
-		Url: `${IO_SERVE_URL}/${name}`,
-		Method: "GET",
-	});
-
-	if (previousFile.Success && previousFile.Body) {
-		source = "\n" + source;
-	} else {
-		source = start + source;
-	}
-
-	HttpService.RequestAsync({
-		Url: `${IO_SERVE_URL}/${name}`,
-		Method: "PATCH",
-		Body: source,
-	});
-
-	new Feedback(`Patched file \`${name}\` in io-serve!`);
-}
-
 /** Recursively generates trees for given objects */
 function generateSubInterface(results: Array<string>, [instanceName, instance]: [string, Instance], depth: number) {
 	results.push(`${"\t".rep(depth - 1)}${validTSIdentifier(instanceName)}: ${instance.ClassName}`);
@@ -227,59 +147,20 @@ function generateSubInterface(results: Array<string>, [instanceName, instance]: 
 }
 
 /** Generates an interface for a given instance. */
-function generateInterface(instance: Instance, useIoServe: boolean) {
+export function generateInterface(instance: Instance) {
 	const results: Array<string> = [createTopLevelInterface(instance), " {\n"];
 	for (const child of getUniqueChildren(instance)) generateSubInterface(results, child, 2);
 	results.push("}\n");
-	(useIoServe ? writeToIoServe : writeToLighting)("types/" + instance.Name + ".d.ts", results.join(""));
-	return true;
-}
-
-function generateSubRojoInterface(results: Array<string>, [instanceName, instance]: [string, Instance], depth: number) {
-	const children = getUniqueChildren(instance);
-	results.push("\t".rep(depth - 1));
-	results.push(validTSIdentifier(instanceName));
-	results.push(": ");
-
-	if (!children.isEmpty()) {
-		results.push(`{\n`);
-		results.push("\t".rep(depth));
-		results.push('$className: "');
-		results.push(instance.ClassName);
-		results.push('",\n');
-
-		for (const child of children) {
-			generateSubRojoInterface(results, child, depth + 1);
-		}
-
-		results.push("\t".rep(depth - 1));
-		results.push("}");
-	} else {
-		results.push('"');
-		results.push(instance.ClassName);
-		results.push('"');
-	}
-	results.push(",\n");
-}
-
-/** Generates a Rojo-esque definition for a given instance */
-function generateRojoInterface(instance: Instance, useIoServe: boolean) {
+	results.push("\n");
+	
 	const varName = getTSVariableName(instance.Name);
-	const results: Array<string> = ["export const ", varName, ' = {\n\t$className: "', instance.ClassName, '",\n'];
+	const typeName = varName.sub(1, 1).upper() + varName.sub(2);
+	const exportName = varName.sub(1, 1).lower() + varName.sub(2);
 
-	for (const child of getUniqueChildren(instance)) {
-		generateSubRojoInterface(results, child, 2);
-	}
+	results.push(`declare const ${exportName}: ${typeName};\n`);
+	results.push(`export = ${exportName};\n`);
 
-	results.push("} as const;\n\n");
-	results.push("export type ");
-	results.push(varName);
-	results.push(" = EvaluateInstanceTree<typeof ");
-	results.push(varName);
-	results.push(">;\n");
-
-	(useIoServe ? patchToIoServe : writeToLighting)("src/tree-definitions.ts", results.join(""));
-	return true;
+	return results.join('');
 }
 
 const defaultObjects = {} as CreatableInstances;
@@ -391,19 +272,6 @@ function instantiateHelper(apiDump: ReadonlyMap<string, ApiClass>, instance: Ins
 	return results;
 }
 
-/** Generates TS Instantiation Code */
-function generateInstantiation(instance: Instance, useIoServe: boolean) {
-	const apiDump = getAPIDump();
-
-	if (apiDump) {
-		(useIoServe ? patchToIoServe : writeToLighting)(
-			"src/" + getTSVariableName(instance.Name) + ".ts",
-			instantiateHelper(apiDump, instance, new Array<string>()).join(""),
-		);
-		return true;
-	} else return false;
-}
-
 function roactHelper(apiDump: ReadonlyMap<string, ApiClass>, instance: Instance, results: Array<string>, depth = 0) {
 	const rbxClass = apiDump.get(instance.ClassName);
 
@@ -461,27 +329,3 @@ function roactHelper(apiDump: ReadonlyMap<string, ApiClass>, instance: Instance,
 
 	return results;
 }
-
-/** Generates TS Instantiation Code */
-function generateRoactInstantiation(instance: Instance, useIoServe: boolean) {
-	const apiDump = getAPIDump();
-
-	if (apiDump) {
-		const fileName = "src/" + getTSVariableName(instance.Name) + ".tsx";
-		const source = roactHelper(apiDump, instance, new Array<string>()).join("");
-
-		if (useIoServe) {
-			patchToIoServe(fileName, source, `import Roact from "@rbxts/roact";\n\n`);
-		} else {
-			writeToLighting(fileName, source);
-		}
-		return true;
-	} else return false;
-}
-
-export = new ReadonlyMap<OPTIONS, (instance: Instance, useIoServe: boolean) => boolean>([
-	["Instantiation code", generateInstantiation],
-	["Roact TSX code", generateRoactInstantiation],
-	["Rojo-esque tree", generateRojoInterface],
-	["TS types", generateInterface],
-]);

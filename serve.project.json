@@ -1,0 +1,20 @@
+{
+ "name": "rbxts-object-to-tree",
+ "tree": {
+  "$className": "DataModel",
+  "ReplicatedStorage": {
+   "object-to-tree": {
+    "$path": "out",
+    "include": {
+     "$path": "include",
+     "node_modules": {
+      "$className": "Folder",
+      "@rbxts": {
+       "$path": "node_modules/@rbxts"
+      }
+     }
+    }
+   }
+  }
+ }
+}

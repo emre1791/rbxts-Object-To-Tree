@@ -4,3 +4,5 @@
 build.rbxmx
 rbxts-object-to-tree.rbxmx
 *.tsbuildinfo
+*.rbxmx
+*.rbxm
