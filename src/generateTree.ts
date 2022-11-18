@@ -146,11 +146,11 @@ function getValidName(desiredName: string, parent: Instance) {
 
 /** Publishes a slice of a string, which should be maximum 19_999 characters */
 function publishSlice(name: string, slice: string, parent: Instance) {
-	const script = new Instance("Script");
-	script.Source = slice;
-	script.Name = getValidName(name, parent);
-	script.Parent = parent;
-	return script;
+	const _script = new Instance("Script");
+	_script.Source = slice;
+	_script.Name = getValidName(name, parent);
+	_script.Parent = parent;
+	return _script;
 }
 
 /** Writes output to Script objects inside of Lighting */
